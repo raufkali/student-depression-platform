@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { submitPrediction } from "@/lib/api";
+import { submitPrediction } from "../lib/api";
 import PredictionResult from "./PredictionResult";
 import { AlertCircle, Loader2, Sparkles, RotateCcw } from "lucide-react";
 

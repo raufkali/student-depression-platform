@@ -4,14 +4,12 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
+/build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
 parts/
 sdist/
 var/
@@ -40,6 +38,10 @@ lerna-debug.log*
 .next/
 out/
 .vercel
+
+# Ensure frontend src files are never ignored
+!frontend/src/
+!frontend/src/**
 
 # Environment files (exclude secrets, keep .env.example)
 .env

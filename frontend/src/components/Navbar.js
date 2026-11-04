@@ -11,16 +11,6 @@ export default function Navbar() {
             AI Wellbeing Platform
           </span>
         </a>
-
-        {/* Status pill */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="inline-flex items-center px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-mono text-accent bg-blue-50 border border-blue-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-accent mr-1.5 animate-pulse"></span>
-            <span className="hidden sm:inline">AI Engine</span>
-            <span className="sm:hidden">AI</span>
-            <span className="ml-1">Active</span>
-          </span>
-        </div>
       </div>
     </header>
   );

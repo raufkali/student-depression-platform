@@ -1,9 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { submitPrediction } from "@/lib/api";
+import { useState, useEffect, useRef } from "react";
+import { submitPrediction, wakeAiService } from "@/lib/api";
 import PredictionResult from "./PredictionResult";
-import { AlertCircle, Loader2, Brain } from "lucide-react";
+import {
+  AlertCircle,
+  Loader2,
+  Brain,
+  Zap,
+  RefreshCw,
+} from "lucide-react";
 
 const INITIAL_STATE = {
   Gender: "",
@@ -23,9 +29,86 @@ export default function AssessmentForm() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [apiError, setApiError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingNotice, setLoadingNotice] = useState(false);
   const [predictionResult, setPredictionResult] = useState(null);
 
+  // Live status of the backend and AI inference engine: "checking" | "waking" | "ready" | "standby"
+  const [aiStatus, setAiStatus] = useState("checking");
+  const wakeTriggeredRef = useRef(false);
+
+  /**
+   * Pings the backend and ML service to wake up cold containers.
+   */
+  const triggerWake = (isManual = false) => {
+    if (aiStatus === "ready" && !isManual) return;
+
+    if (aiStatus !== "ready") {
+      setAiStatus("waking");
+    }
+
+    wakeAiService(isManual)
+      .then((res) => {
+        if (res && res.ready) {
+          setAiStatus("ready");
+        } else if (res && res.status === "waking") {
+          setAiStatus("waking");
+        } else {
+          setAiStatus("standby");
+        }
+      })
+      .catch(() => {
+        setAiStatus("standby");
+      });
+  };
+
+  // Mount effect: Start background wake ping as soon as page loads
+  useEffect(() => {
+    triggerWake();
+  }, []);
+
+  // Polling effect: While waking, check every 3.5s (up to 10 attempts) until ready
+  useEffect(() => {
+    if (aiStatus !== "waking") return;
+
+    let attempts = 0;
+    const maxAttempts = 10;
+    const interval = setInterval(async () => {
+      attempts += 1;
+      const res = await wakeAiService(true);
+      if (res && res.ready) {
+        setAiStatus("ready");
+        clearInterval(interval);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [aiStatus]);
+
+  // Loading notice: If submission takes > 2.5s, inform the user about cold start warm-up
+  useEffect(() => {
+    let timer;
+    if (isLoading) {
+      timer = setTimeout(() => {
+        setLoadingNotice(true);
+      }, 2500);
+    } else {
+      setLoadingNotice(false);
+    }
+    return () => clearTimeout(timer);
+  }, [isLoading]);
+
+  // Form interaction listener: Wake backend and AI as soon as user focuses or types in any field
+  const handleFormInteraction = () => {
+    if (!wakeTriggeredRef.current || aiStatus !== "ready") {
+      wakeTriggeredRef.current = true;
+      triggerWake();
+    }
+  };
+
   const handleChange = (e) => {
+    handleFormInteraction();
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
     if (fieldErrors[name]) {
@@ -74,7 +157,7 @@ export default function AssessmentForm() {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
     setApiError(null);
 
     if (!validateForm()) return;
@@ -85,11 +168,20 @@ export default function AssessmentForm() {
 
     if (response.success) {
       setPredictionResult(response.data);
+      setAiStatus("ready");
       const container = document.getElementById("form-top");
       if (container) container.scrollIntoView({ behavior: "smooth" });
     } else {
       setApiError(response.error);
+      if (response.isWarmingUp) {
+        setAiStatus("waking");
+      }
     }
+  };
+
+  const handleRetry = () => {
+    triggerWake(true);
+    handleSubmit();
   };
 
   const handleReset = () => {
@@ -109,12 +201,45 @@ export default function AssessmentForm() {
     <div id="form-top" className="w-full max-w-3xl mx-auto py-6 sm:py-8 px-4 sm:px-6">
       {!predictionResult && (
         <div className="mb-8 text-center sm:text-left">
-          <div className="inline-flex items-center gap-2 mb-3">
-            <span className="w-2 h-2 bg-accent"></span>
-            <span className="text-[11px] font-mono tracking-[0.2em] uppercase font-semibold text-muted">
-              AI-Powered Screening
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div className="inline-flex items-center gap-2">
+              <span className="w-2 h-2 bg-accent"></span>
+              <span className="text-[11px] font-mono tracking-[0.2em] uppercase font-semibold text-muted">
+                AI-Powered Screening
+              </span>
+            </div>
+
+            {/* AI Live Engine Status Badge */}
+            {aiStatus === "ready" && (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono font-medium text-emerald-800 bg-emerald-50 border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                AI Engine Online &amp; Ready
+              </div>
+            )}
+
+            {aiStatus === "waking" && (
+              <div
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono font-medium text-amber-800 bg-amber-50 border border-amber-200"
+                title="Waking AI service from standby. It will be ready before you finish filling details."
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
+                Waking AI Engine (Warm-Up in Progress)…
+              </div>
+            )}
+
+            {(aiStatus === "standby" || aiStatus === "checking") && (
+              <button
+                type="button"
+                onClick={() => triggerWake(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono font-medium text-navy-deep bg-blue-50/70 border border-blue-200 hover:bg-blue-100 transition-colors"
+                title="Click to ping and wake the AI service"
+              >
+                <Zap className="w-3 h-3 text-accent" />
+                AI Standby (Click to Wake)
+              </button>
+            )}
           </div>
+
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-serif font-bold text-navy-deep tracking-tight leading-tight">
             Student Depression Risk Assessment
           </h1>
@@ -129,19 +254,36 @@ export default function AssessmentForm() {
       {predictionResult ? (
         <PredictionResult result={predictionResult} onReset={handleReset} />
       ) : (
-        <form onSubmit={handleSubmit} noValidate className="space-y-6">
+        <form
+          onSubmit={handleSubmit}
+          onFocusCapture={handleFormInteraction}
+          onChangeCapture={handleFormInteraction}
+          noValidate
+          className="space-y-6"
+        >
           {apiError && (
             <div
               role="alert"
-              className="p-4 bg-red-50 border-l-4 border-red-500 text-red-800 text-sm flex items-start gap-3"
+              className="p-4 bg-red-50 border-l-4 border-red-500 text-red-900 text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm"
             >
-              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-600" />
-              <div>
-                <h4 className="font-semibold text-xs uppercase tracking-wider">
-                  Service Notice
-                </h4>
-                <p className="mt-1 text-xs sm:text-sm">{apiError}</p>
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-600" />
+                <div>
+                  <h4 className="font-semibold text-xs uppercase tracking-wider text-red-800">
+                    Service Notice
+                  </h4>
+                  <p className="mt-1 text-xs sm:text-sm text-red-700">{apiError}</p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={isLoading}
+                className="self-start sm:self-center inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-semibold tracking-wide transition-colors flex-shrink-0 shadow-sm"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                Wake AI &amp; Retry
+              </button>
             </div>
           )}
 
@@ -167,6 +309,7 @@ export default function AssessmentForm() {
                   name="Gender"
                   value={formData.Gender}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Gender ? inputBad : inputOk
                   }`}
@@ -196,6 +339,7 @@ export default function AssessmentForm() {
                   placeholder="e.g. 21"
                   value={formData.Age}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Age ? inputBad : inputOk
                   }`}
@@ -233,6 +377,7 @@ export default function AssessmentForm() {
                   placeholder="e.g. 6"
                   value={formData.Current_semester}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Current_semester ? inputBad : inputOk
                   }`}
@@ -264,6 +409,7 @@ export default function AssessmentForm() {
                   placeholder="e.g. 3.45"
                   value={formData.CGPA}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.CGPA ? inputBad : inputOk
                   }`}
@@ -300,6 +446,7 @@ export default function AssessmentForm() {
                   name="Family_background"
                   value={formData.Family_background}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Family_background ? inputBad : inputOk
                   }`}
@@ -328,6 +475,7 @@ export default function AssessmentForm() {
                   name="Relationship_status"
                   value={formData.Relationship_status}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Relationship_status ? inputBad : inputOk
                   }`}
@@ -356,6 +504,7 @@ export default function AssessmentForm() {
                   name="Marital_status"
                   value={formData.Marital_status}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Marital_status ? inputBad : inputOk
                   }`}
@@ -384,6 +533,7 @@ export default function AssessmentForm() {
                   name="Living_style"
                   value={formData.Living_style}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Living_style ? inputBad : inputOk
                   }`}
@@ -413,6 +563,7 @@ export default function AssessmentForm() {
                   name="friend_circle"
                   value={formData.friend_circle}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.friend_circle ? inputBad : inputOk
                   }`}
@@ -444,6 +595,7 @@ export default function AssessmentForm() {
                   placeholder="e.g. 5000"
                   value={formData.Cost_without_study}
                   onChange={handleChange}
+                  onFocus={handleFormInteraction}
                   className={`${inputBase} ${
                     fieldErrors.Cost_without_study ? inputBad : inputOk
                   }`}
@@ -469,7 +621,9 @@ export default function AssessmentForm() {
               {isLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Analyzing Assessment…
+                  {aiStatus === "waking"
+                    ? "Waking AI Model & Analyzing…"
+                    : "Analyzing Assessment…"}
                 </>
               ) : (
                 <>
@@ -478,6 +632,13 @@ export default function AssessmentForm() {
                 </>
               )}
             </button>
+
+            {isLoading && loadingNotice && (
+              <p className="mt-2.5 text-xs text-muted font-mono flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                Waking AI inference service from cold standby... (free-tier cold starts may take ~15–30s)
+              </p>
+            )}
           </div>
         </form>
       )}

@@ -1,9 +1,9 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Student Research — Machine Learning Depression Classification",
+  title: "Depression Predictor AI — Student Wellbeing Platform",
   description:
-    "An academic machine-learning research platform exploring student-related attributes and Support Vector Machine classification.",
+    "AI-powered student depression risk screening built on research-backed machine learning classification.",
 };
 
 export default function RootLayout({ children }) {

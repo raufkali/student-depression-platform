@@ -14,15 +14,21 @@ module.exports = {
         subtle: "var(--subtle)",
         border: "var(--border)",
         muted: "var(--muted)",
-        emerald: {
-          accent: "var(--emerald-accent)",
-          secondary: "var(--emerald-secondary)",
+        navy: {
+          DEFAULT: "var(--navy)",
+          deep: "var(--navy-deep)",
+          light: "var(--navy-light)",
+        },
+        accent: {
+          DEFAULT: "var(--accent)",
+          hover: "var(--accent-hover)",
         },
       },
       fontFamily: {
         serif: ["'Cormorant Garamond'", "Georgia", "Cambria", "'Times New Roman'", "serif"],
         sans: ["'DM Sans'", "-apple-system", "BlinkMacSystemFont", "'Segoe UI'", "Roboto", "sans-serif"],
         editorial: ["'Manrope'", "'DM Sans'", "sans-serif"],
+        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       borderRadius: {
         none: "0px",

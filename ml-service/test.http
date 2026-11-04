@@ -1,24 +1,42 @@
-
 ### 1. Check whether API is running
 GET http://127.0.0.1:8000/
 
-### 2. Check loaded model
+### 2. Health check
+GET http://127.0.0.1:8000/health
+
+### 3. Check loaded model
 GET http://127.0.0.1:8000/model-info
 
-### 3. Test actual ML prediction
+### 4. Test actual universal ML prediction (No Home_division needed)
 POST http://127.0.0.1:8000/predict
 Content-Type: application/json
 
 {
     "Gender": "Female",
     "Age": 22,
-    "Family_background": "Good",
-    "Relationship_status": "Single",
+    "Family_background": "Lower Middle class",
+    "Relationship_status": "Complicated",
     "Marital_status": "Unmarried",
-    "Living_style": "With family",
+    "Living_style": "Bachelor",
     "Current_semester": 7,
-    "CGPA": 3.5,
-    "friend_circle": "Good",
-    "Cost_without_study": 5000,
-    "Home_division": "Malakand"
+    "CGPA": 2.9,
+    "friend_circle": "No",
+    "Cost_without_study": 8000
+}
+
+### 5. Test negative class prediction
+POST http://127.0.0.1:8000/predict
+Content-Type: application/json
+
+{
+    "Gender": "Male",
+    "Age": 21,
+    "Family_background": "Middle class",
+    "Relationship_status": "In a Relationship",
+    "Marital_status": "Unmarried",
+    "Living_style": "Family",
+    "Current_semester": 4,
+    "CGPA": 3.75,
+    "friend_circle": "Yes",
+    "Cost_without_study": 3500
 }

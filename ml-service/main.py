@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import joblib
 import pandas as pd
@@ -8,8 +9,8 @@ from pydantic import BaseModel
 
 app = FastAPI(
     title="Student Depression Research API",
-    description="Experimental Service for SVM-based Student Depression Research Prediction",
-    version="1.0.0"
+    description="Universal SVM-based Student Depression Research Prediction Service",
+    version="1.1.0"
 )
 
 # Enable Cross-Origin Resource Sharing
@@ -28,6 +29,19 @@ artifact = joblib.load(MODEL_PATH)
 model = artifact["model"]
 threshold = artifact["threshold"]
 
+FEATURE_COLUMNS = [
+    "Gender",
+    "Age",
+    "Family_background",
+    "Relationship_status",
+    "Marital_status",
+    "Living_style",
+    "Current_semester",
+    "CGPA",
+    "friend_circle",
+    "Cost_without_study"
+]
+
 
 class StudentData(BaseModel):
     Gender: str
@@ -40,14 +54,16 @@ class StudentData(BaseModel):
     CGPA: float
     friend_circle: str
     Cost_without_study: float
-    Home_division: str
+    Home_division: Optional[str] = None
 
 
 @app.get("/")
 def home():
     return {
         "status": "running",
-        "service": "Student Depression Research API"
+        "service": "Student Depression Research API",
+        "version": "1.1.0",
+        "features": FEATURE_COLUMNS
     }
 
 
@@ -71,9 +87,10 @@ def model_info():
 
 @app.post("/predict")
 def predict(student: StudentData):
-    student_data = pd.DataFrame([student.model_dump()])
+    data_dict = student.model_dump()
+    student_df = pd.DataFrame([{col: data_dict[col] for col in FEATURE_COLUMNS}])
 
-    score = float(model.decision_function(student_data)[0])
+    score = float(model.decision_function(student_df)[0])
     prediction = "Yes" if score >= threshold else "No"
 
     return {

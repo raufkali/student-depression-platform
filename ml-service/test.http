@@ -1,0 +1,24 @@
+
+### 1. Check whether API is running
+GET http://127.0.0.1:8000/
+
+### 2. Check loaded model
+GET http://127.0.0.1:8000/model-info
+
+### 3. Test actual ML prediction
+POST http://127.0.0.1:8000/predict
+Content-Type: application/json
+
+{
+    "Gender": "Female",
+    "Age": 22,
+    "Family_background": "Good",
+    "Relationship_status": "Single",
+    "Marital_status": "Unmarried",
+    "Living_style": "With family",
+    "Current_semester": 7,
+    "CGPA": 3.5,
+    "friend_circle": "Good",
+    "Cost_without_study": 5000,
+    "Home_division": "Malakand"
+}

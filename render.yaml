@@ -1,0 +1,31 @@
+services:
+  # 1. Python ML Inference Service (FastAPI + Scikit-learn SVM)
+  - type: web
+    name: student-depression-ml
+    runtime: python
+    rootDir: ml-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+
+  # 2. Node.js Express API Backend
+  - type: web
+    name: student-depression-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20.x
+      - key: ML_SERVICE_URL
+        fromService:
+          type: web
+          name: student-depression-ml
+          property: host

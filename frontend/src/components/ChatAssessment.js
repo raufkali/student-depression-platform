@@ -8,10 +8,8 @@ import { ChoiceInput, TextInput } from "./chat/ChatInput";
 import PredictionResult from "./PredictionResult";
 import { Brain, Loader2, RefreshCw } from "lucide-react";
 
-const WAKE_POLL_MS = 4000; // how often to check while waking
-const WAKE_MAX_ATTEMPTS = 30; // ~2 minutes, then stop polling
-const SUBMIT_AUTO_RETRIES = 2; // extra automatic tries if the AI is still waking
-const SUBMIT_RETRY_DELAY_MS = 5000;
+const WAKE_POLL_MS = 4000; // how often to ping while the AI is waking
+const SUBMIT_RETRY_DELAY_MS = 4000; // pause between prediction attempts
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -19,7 +17,7 @@ export default function ChatAssessment() {
   const [messages, setMessages] = useState([]);
   const [stepIndex, setStepIndex] = useState(-1);
   const [answers, setAnswers] = useState({});
-  const [aiStatus, setAiStatus] = useState("idle"); // idle | waking | ready | standby
+  const [aiStatus, setAiStatus] = useState("idle"); // idle | waking | ready
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [predictionResult, setPredictionResult] = useState(null);
   const [predictionFailed, setPredictionFailed] = useState(false);
@@ -27,48 +25,52 @@ export default function ChatAssessment() {
 
   const bottomRef = useRef(null);
   const startedRef = useRef(false);
-  const wakeRunRef = useRef(0); // incrementing this cancels any running wake loop
+  const aiReadyRef = useRef(false); // latest "is AI ready" value, readable inside async loops
+  const wakeRunRef = useRef(0); // bump to cancel the running wake loop
+  const sessionRef = useRef(0); // bump on reset/unmount to cancel everything
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSubmitting]);
 
-  // Cancel any running wake loop when the component unmounts
+  // Cancel all loops when the component unmounts
   useEffect(() => {
     return () => {
       wakeRunRef.current++;
+      sessionRef.current++;
     };
   }, []);
 
+  const markReady = useCallback(() => {
+    aiReadyRef.current = true;
+    setAiStatus("ready");
+  }, []);
+
   /**
-   * Wakes the AI service. Polls until it is ready, then stops.
-   * Gives up after WAKE_MAX_ATTEMPTS so it never polls forever.
-   * Starting a new loop automatically cancels the previous one.
+   * Pings the backend (which wakes the ML service) until it reports ready.
+   * No attempt limit: it only stops when the AI is ready, or when cancelled
+   * by a reset, unmount, or a newer wake loop.
    */
   const startWakeLoop = useCallback(async () => {
     const runId = ++wakeRunRef.current;
+    aiReadyRef.current = false;
     setAiStatus("waking");
 
-    for (let i = 0; i < WAKE_MAX_ATTEMPTS; i++) {
-      if (wakeRunRef.current !== runId) return false;
-
+    while (wakeRunRef.current === runId) {
       try {
         const res = await wakeAiService(true);
         if (wakeRunRef.current !== runId) return false;
         if (res?.ready) {
-          setAiStatus("ready");
+          markReady();
           return true;
         }
       } catch {
         /* keep trying */
       }
-
       await sleep(WAKE_POLL_MS);
     }
-
-    if (wakeRunRef.current === runId) setAiStatus("standby");
     return false;
-  }, []);
+  }, [markReady]);
 
   const pushMessage = useCallback((msg) => {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), ...msg }]);
@@ -94,7 +96,7 @@ export default function ChatAssessment() {
     startedRef.current = true;
     setStepIndex(0);
 
-    // Start waking the AI right when the assessment begins (runs in background)
+    // Ping the backend right away so the AI starts waking while the user answers
     startWakeLoop();
 
     pushBot(
@@ -141,6 +143,9 @@ export default function ChatAssessment() {
   };
 
   const finishAndPredict = async (finalAnswers, isRetry = false) => {
+    const session = sessionRef.current;
+    const cancelled = () => sessionRef.current !== session;
+
     setPredictionFailed(false);
     setIsSubmitting(true);
 
@@ -150,48 +155,61 @@ export default function ChatAssessment() {
         : "Perfect — that's everything. Let me analyze your responses with the model…"
     );
 
-    let response = null;
+    // 1. Make sure a wake loop is running, then wait until the AI is ready.
+    if (!aiReadyRef.current) {
+      pushBot(
+        "The AI model is still waking up. This can take a couple of minutes — I'll keep trying, no need to refresh."
+      );
+      // Re-start the wake loop only if it isn't already running
+      if (aiStatus === "idle") startWakeLoop();
+      while (!aiReadyRef.current) {
+        if (cancelled()) return;
+        await sleep(1000);
+      }
+    }
+    if (cancelled()) return;
 
-    // The backend already retries for a while. If it still says "warming up",
-    // we try a couple more times here before showing an error.
-    for (let attempt = 0; attempt <= SUBMIT_AUTO_RETRIES; attempt++) {
+    // 2. Submit. Keep retrying with no limit while the service is warming
+    //    up or unreachable. Stop only on success or a real (non-cold-start) error.
+    let response = null;
+    while (true) {
       response = await submitPrediction(finalAnswers);
+      if (cancelled()) return;
 
       if (response.success) break;
-      if (!response.isWarmingUp && !response.isNetworkError) break; // real error, don't retry
+      if (!response.isWarmingUp && !response.isNetworkError) break; // real error
 
-      if (attempt < SUBMIT_AUTO_RETRIES) {
-        setAiStatus("waking");
-        await sleep(SUBMIT_RETRY_DELAY_MS);
-      }
+      setAiStatus("waking");
+      await sleep(SUBMIT_RETRY_DELAY_MS);
+      if (cancelled()) return;
     }
 
     setIsSubmitting(false);
 
     if (response.success) {
-      wakeRunRef.current++; // stop any wake loop still running
-      setAiStatus("ready");
+      wakeRunRef.current++; // stop the wake loop if it's somehow still running
+      markReady();
       setPredictionResult(response.data);
       return;
     }
 
     setPredictionFailed(true);
-    setAiStatus(response.isWarmingUp || response.isNetworkError ? "standby" : aiStatus);
     pushBot(
       response.error ||
-        "The AI service didn't respond in time. Give it a moment and try again.",
+        "Something went wrong while analyzing your responses. Please try again.",
       "error"
     );
   };
 
   const handleRetry = () => {
     if (Object.keys(answers).length !== QUESTIONS.length) return;
-    startWakeLoop(); // nudge the AI awake again in the background
     finishAndPredict(answers, true);
   };
 
   const handleReset = () => {
-    wakeRunRef.current++; // cancel any wake loop
+    wakeRunRef.current++;
+    sessionRef.current++;
+    aiReadyRef.current = false;
     setMessages([]);
     setStepIndex(-1);
     setAnswers({});
@@ -217,8 +235,6 @@ export default function ChatAssessment() {
       ? "AI ready"
       : aiStatus === "waking"
       ? "AI waking up…"
-      : aiStatus === "standby"
-      ? "AI asleep"
       : null;
 
   return (
@@ -287,7 +303,7 @@ export default function ChatAssessment() {
                     <Loader2 className="w-4 h-4 animate-spin text-accent" />
                     {aiStatus === "ready"
                       ? "Analyzing your responses…"
-                      : "Waking up the AI model, this can take up to a minute on the first request…"}
+                      : "Waking up the AI model… this can take a couple of minutes."}
                   </span>
                 </ChatMessage>
               )}

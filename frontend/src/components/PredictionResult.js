@@ -1,195 +1,235 @@
-import express from "express";
+"use client";
 
-const router = express.Router();
+import { useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
+  HeartHandshake,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 
-/**
- * Normalizes and resolves the ML service URL from environment variables.
- * Handles missing protocols, Render internal service names, and trailing slashes.
- */
-export function resolveMlServiceUrl(rawUrl = process.env.ML_SERVICE_URL) {
-    if (!rawUrl || !rawUrl.trim()) {
-        return "http://127.0.0.1:8000";
-    }
+export default function PredictionResult({ result, onReset, onClose }) {
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
 
-    let url = rawUrl.trim();
+  if (!result) return null;
 
-    if (!/^https?:\/\//i.test(url)) {
-        if (
-            url.includes(".onrender.com") ||
-            url.includes(".vercel.app") ||
-            url.includes(".koyeb.app")
-        ) {
-            url = `https://${url}`;
-        } else if (!url.includes(":") && !url.includes(".")) {
-            // Render private network hostname (e.g. 'student-depression-ml')
-            url = `http://${url}:10000`;
-        } else {
-            url = `http://${url}`;
-        }
-    }
+  const { experimental_prediction, decision_score, threshold } = result;
+  const isDepressedRisk = experimental_prediction === "Yes";
 
-    return url.replace(/\/+$/, "");
+  return (
+    <div className="w-full bg-surface border border-border relative">
+      {/* Close button — dismisses modal without resetting the chat */}
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close result"
+          className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center text-muted hover:text-navy-deep hover:bg-subtle transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+
+      <div className="p-5 sm:p-8 lg:p-10">
+        {/* Header */}
+        <div className="flex items-start sm:items-center gap-3 sm:gap-4 pb-6 border-b border-border pr-8">
+          {isDepressedRisk ? (
+            <div className="w-11 h-11 sm:w-12 sm:h-12 bg-amber-50 border border-amber-300 text-amber-700 flex items-center justify-center flex-shrink-0">
+              <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
+            </div>
+          ) : (
+            <div className="w-11 h-11 sm:w-12 sm:h-12 bg-emerald-50 border border-emerald-300 text-emerald-700 flex items-center justify-center flex-shrink-0">
+              <CheckCircle className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
+            </div>
+          )}
+
+          <div className="min-w-0">
+            <span className="text-[10px] sm:text-[11px] font-mono uppercase tracking-widest text-muted block">
+              AI Assessment Result
+            </span>
+            <h2 className="text-lg sm:text-xl lg:text-2xl font-serif font-bold text-navy-deep mt-0.5 leading-snug">
+              {isDepressedRisk ? (
+                <span className="text-amber-800">
+                  Elevated risk — The student may be experiencing depression
+                </span>
+              ) : (
+                <span className="text-emerald-700">
+                  Low risk — The student is unlikely to be depressed
+                </span>
+              )}
+            </h2>
+          </div>
+        </div>
+
+        {/* Explanation */}
+        <div className="py-6 space-y-4">
+          {isDepressedRisk ? (
+            <div className="bg-[#FFFBEB] border-l-4 border-amber-500 p-4 sm:p-5">
+              <h3 className="text-sm font-semibold text-amber-900 uppercase tracking-wide mb-1.5 flex items-center gap-2">
+                <HeartHandshake className="w-4 h-4 text-amber-700" />
+                What this means
+              </h3>
+              <p className="text-sm text-amber-900/90 leading-relaxed">
+                Based on the academic load, relationship factors, living situation,
+                and social circles provided, the AI model identified patterns
+                commonly associated with elevated student depression and emotional
+                strain.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-[#ECFDF5] border-l-4 border-emerald-600 p-4 sm:p-5">
+              <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide mb-1.5 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                What this means
+              </h3>
+              <p className="text-sm text-emerald-900/90 leading-relaxed">
+                Based on the submitted information, the student&apos;s attributes
+                align with positive wellbeing patterns, showing low risk of
+                depression.
+              </p>
+            </div>
+          )}
+
+          <div className="border border-border p-4 sm:p-5 bg-subtle">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-navy-deep mb-3">
+              {isDepressedRisk
+                ? "Recommended Steps & Support"
+                : "Healthy Habits & Maintenance"}
+            </h4>
+
+            {isDepressedRisk ? (
+              <ul className="space-y-2 text-sm text-muted">
+                <li className="flex items-start gap-2">
+                  <span className="text-accent font-bold">•</span>
+                  <span>
+                    <strong className="text-navy-deep">Speak with someone:</strong>{" "}
+                    Reach out to an academic counselor, campus wellbeing center, or
+                    trusted friend.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-accent font-bold">•</span>
+                  <span>
+                    <strong className="text-navy-deep">
+                      Manage academic workload:
+                    </strong>{" "}
+                    Discuss semester pacing or deadline extensions if stress feels
+                    unmanageable.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-accent font-bold">•</span>
+                  <span>
+                    <strong className="text-navy-deep">
+                      Stay socially connected:
+                    </strong>{" "}
+                    Even brief conversations with peers or family can alleviate
+                    feelings of isolation.
+                  </span>
+                </li>
+              </ul>
+            ) : (
+              <ul className="space-y-2 text-sm text-muted">
+                <li className="flex items-start gap-2">
+                  <span className="text-accent font-bold">•</span>
+                  <span>
+                    <strong className="text-navy-deep">
+                      Maintain social connections:
+                    </strong>{" "}
+                    Keep nurturing supportive friendships and peer groups.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-accent font-bold">•</span>
+                  <span>
+                    <strong className="text-navy-deep">
+                      Balance study and rest:
+                    </strong>{" "}
+                    Prioritize regular sleep, exercise, and leisure alongside
+                    academic goals.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-accent font-bold">•</span>
+                  <span>
+                    <strong className="text-navy-deep">Be there for peers:</strong>{" "}
+                    Look out for friends who might be struggling through stressful
+                    semesters.
+                  </span>
+                </li>
+              </ul>
+            )}
+          </div>
+        </div>
+
+        {/* Technical toggle */}
+        <div className="pt-2 pb-4">
+          <button
+            type="button"
+            onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+            className="text-xs text-muted hover:text-accent inline-flex items-center gap-1 font-mono transition-colors"
+          >
+            {showTechnicalDetails ? (
+              <>
+                Hide Technical Model Details <ChevronUp className="w-3.5 h-3.5" />
+              </>
+            ) : (
+              <>
+                Show Technical Model Details <ChevronDown className="w-3.5 h-3.5" />
+              </>
+            )}
+          </button>
+
+          {showTechnicalDetails && (
+            <div className="mt-3 p-4 bg-background border border-border font-mono text-xs text-muted space-y-1.5 animate-fadeIn">
+              <div className="flex justify-between gap-4">
+                <span>Model Classification:</span>
+                <strong className="text-navy-deep">
+                  {experimental_prediction}
+                </strong>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span>Decision Score:</span>
+                <span className="text-navy-deep">
+                  {decision_score.toFixed(4)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span>Calibrated Cutoff Threshold:</span>
+                <span className="text-navy-deep">{threshold.toFixed(4)}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span>Distance to Boundary:</span>
+                <span className="text-navy-deep">
+                  {(decision_score - threshold).toFixed(4)}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Action */}
+        <div className="pt-6 border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+          <button
+            type="button"
+            onClick={onReset}
+            className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 bg-accent hover:bg-accent-hover text-white text-sm font-semibold transition-colors"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Run Another Assessment
+          </button>
+
+          <p className="text-[11px] text-muted text-center sm:text-right max-w-sm leading-relaxed">
+            <strong className="text-navy-deep">Important:</strong> This is an AI
+            screening tool for educational awareness, not a clinical psychiatric
+            diagnosis.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
-
-/**
- * Pings the ML service health endpoint to verify connectivity.
- * The request itself also wakes a sleeping Render instance.
- */
-export async function pingMlService(timeoutMs = 10000) {
-    const baseUrl = resolveMlServiceUrl();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-        const response = await fetch(`${baseUrl}/health`, {
-            method: "GET",
-            headers: { Accept: "application/json" },
-            signal: controller.signal,
-        });
-
-        const data = await response.json().catch(() => ({}));
-
-        // HTTP 200 alone does not mean the model is loaded
-        const modelReady = data.ready === true || data.model_loaded === true;
-        const isReady = response.ok && modelReady;
-
-        return {
-            isReady,
-            status: isReady ? "healthy" : "waking",
-            modelLoaded: modelReady,
-            statusCode: response.status,
-            targetUrl: baseUrl,
-            details: data,
-        };
-    } catch (err) {
-        return {
-            isReady: false,
-            status: "waking",
-            modelLoaded: false,
-            error:
-                err.name === "AbortError"
-                    ? "ML service health check timed out."
-                    : err.message,
-            targetUrl: baseUrl,
-        };
-    } finally {
-        clearTimeout(timeoutId);
-    }
-}
-
-/**
- * GET /api/wake
- * Explicit wake-up trigger. Pings the ML service so it starts up from standby.
- */
-router.get("/wake", async (req, res) => {
-    const mlHealth = await pingMlService(10000);
-
-    if (!mlHealth.isReady) {
-        return res.status(503).json({
-            ready: false,
-            status: "waking",
-            backend: "healthy",
-            message: "ML service is starting or loading its model.",
-            mlService: mlHealth,
-        });
-    }
-
-    return res.status(200).json({
-        ready: true,
-        status: "ready",
-        backend: "healthy",
-        message: "AI inference engine is ready.",
-        mlService: mlHealth,
-    });
-});
-
-/**
- * POST /api/predict
- * Forwards the payload to the ML service. If the service is cold-starting,
- * retries within a total time budget instead of dropping the request.
- */
-router.post("/predict", async (req, res) => {
-    const mlUrl = resolveMlServiceUrl();
-
-    const TOTAL_BUDGET_MS = 85000; // stay under Render's ~100s request limit
-    const PER_ATTEMPT_TIMEOUT_MS = 25000;
-    const RETRY_DELAY_MS = 4000;
-    const RETRYABLE_STATUSES = [502, 503, 504];
-
-    const deadline = Date.now() + TOTAL_BUDGET_MS;
-
-    let lastError = null;
-    let attempt = 0;
-
-    while (Date.now() < deadline) {
-        attempt++;
-
-        const remaining = deadline - Date.now();
-        const controller = new AbortController();
-        const timeoutId = setTimeout(
-            () => controller.abort(),
-            Math.min(PER_ATTEMPT_TIMEOUT_MS, remaining)
-        );
-
-        try {
-            const response = await fetch(`${mlUrl}/predict`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                },
-                body: JSON.stringify(req.body),
-                signal: controller.signal,
-            });
-
-            clearTimeout(timeoutId);
-
-            // Client errors (400, 422 validation, etc.): never retry
-            if (response.status >= 400 && response.status < 500) {
-                const clientErr = await response.json().catch(() => ({}));
-                return res.status(response.status).json(clientErr);
-            }
-
-            // Success
-            if (response.ok) {
-                const result = await response.json();
-                return res.status(200).json(result);
-            }
-
-            // Real server error (e.g. 500): not a cold-start symptom, return it
-            if (!RETRYABLE_STATUSES.includes(response.status)) {
-                const serverErr = await response.json().catch(() => null);
-                return res.status(response.status).json(
-                    serverErr || {
-                        error: "AI service returned an unexpected server error.",
-                        status: response.status,
-                    }
-                );
-            }
-
-            // 502/503/504: service is probably waking up, retry
-            lastError = new Error(`ML service returned HTTP ${response.status}`);
-        } catch (error) {
-            clearTimeout(timeoutId);
-            lastError = error;
-        }
-
-        console.log(
-            `[Prediction Gateway] Attempt ${attempt} failed (${lastError?.message}). Retrying...`
-        );
-
-        if (Date.now() + RETRY_DELAY_MS >= deadline) break;
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-    }
-
-    console.error("[Prediction Gateway] Gave up:", lastError?.message);
-
-    return res.status(503).json({
-        error:
-            "The AI prediction service is still waking up from standby. Please retry in a few moments.",
-        code: "AI_WARMING_UP",
-        details: lastError?.message,
-    });
-});
-
-export default router;

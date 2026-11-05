@@ -1,11 +1,10 @@
 import express from "express";
 import cors from "cors";
-import "dotenv/config"
+import "dotenv/config";
 import predictionRoutes, {
     pingMlService,
     resolveMlServiceUrl,
 } from "./routes/prediction.js";
-
 
 const app = express();
 
@@ -21,24 +20,24 @@ app.get("/", (req, res) => {
 });
 
 /**
- * Top-level health check endpoint.
- * Returns combined health for both the Express gateway and the Python ML service.
+ * Top-level health check.
+ * Returns combined health for the Express gateway and the Python ML service.
+ * Always responds 200 so Render's own health check never fails because the ML
+ * service is asleep.
  */
 app.get("/health", async (req, res) => {
-    const mlHealth = await pingMlService(4000);
-    res.json({
+    const mlHealth = await pingMlService(8000);
+
+    res.status(200).json({
         status: mlHealth.isReady ? "healthy" : "waking",
-        uptime: process.uptime(),
+        ready: mlHealth.isReady,
         backend: "healthy",
         mlService: mlHealth,
+        uptime: process.uptime(),
     });
 });
 
-/**
- * Top-level wake route for convenience.
- */
-
-// Prediction API routes mounted at /api
+// Prediction API routes mounted at /api  (/api/wake, /api/predict)
 app.use("/api", predictionRoutes);
 
 const PORT = process.env.PORT || 5000;

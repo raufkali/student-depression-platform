@@ -8,44 +8,67 @@ import { ChoiceInput, TextInput } from "./chat/ChatInput";
 import PredictionResult from "./PredictionResult";
 import { Brain, Loader2, RefreshCw } from "lucide-react";
 
+const WAKE_POLL_MS = 4000; // how often to check while waking
+const WAKE_MAX_ATTEMPTS = 30; // ~2 minutes, then stop polling
+const SUBMIT_AUTO_RETRIES = 2; // extra automatic tries if the AI is still waking
+const SUBMIT_RETRY_DELAY_MS = 5000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function ChatAssessment() {
   const [messages, setMessages] = useState([]);
   const [stepIndex, setStepIndex] = useState(-1);
   const [answers, setAnswers] = useState({});
-  const [aiStatus, setAiStatus] = useState("checking");
+  const [aiStatus, setAiStatus] = useState("idle"); // idle | waking | ready | standby
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [predictionResult, setPredictionResult] = useState(null);
+  const [predictionFailed, setPredictionFailed] = useState(false);
   const [inputLocked, setInputLocked] = useState(true);
 
   const bottomRef = useRef(null);
   const startedRef = useRef(false);
+  const wakeRunRef = useRef(0); // incrementing this cancels any running wake loop
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSubmitting]);
 
+  // Cancel any running wake loop when the component unmounts
   useEffect(() => {
-    if (stepIndex < 0 || aiStatus === "ready") return;
-    let cancelled = false;
+    return () => {
+      wakeRunRef.current++;
+    };
+  }, []);
+
+  /**
+   * Wakes the AI service. Polls until it is ready, then stops.
+   * Gives up after WAKE_MAX_ATTEMPTS so it never polls forever.
+   * Starting a new loop automatically cancels the previous one.
+   */
+  const startWakeLoop = useCallback(async () => {
+    const runId = ++wakeRunRef.current;
     setAiStatus("waking");
 
-    const ping = async () => {
+    for (let i = 0; i < WAKE_MAX_ATTEMPTS; i++) {
+      if (wakeRunRef.current !== runId) return false;
+
       try {
         const res = await wakeAiService(true);
-        if (cancelled) return;
-        setAiStatus(res?.ready ? "ready" : "waking");
+        if (wakeRunRef.current !== runId) return false;
+        if (res?.ready) {
+          setAiStatus("ready");
+          return true;
+        }
       } catch {
-        if (!cancelled) setAiStatus("standby");
+        /* keep trying */
       }
-    };
 
-    ping();
-    const id = setInterval(ping, 3500);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [stepIndex, aiStatus]);
+      await sleep(WAKE_POLL_MS);
+    }
+
+    if (wakeRunRef.current === runId) setAiStatus("standby");
+    return false;
+  }, []);
 
   const pushMessage = useCallback((msg) => {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), ...msg }]);
@@ -70,6 +93,10 @@ export default function ChatAssessment() {
     if (startedRef.current) return;
     startedRef.current = true;
     setStepIndex(0);
+
+    // Start waking the AI right when the assessment begins (runs in background)
+    startWakeLoop();
+
     pushBot(
       "Hi there 👋 I'm your wellbeing assistant. A few short questions — about a minute."
     );
@@ -113,49 +140,66 @@ export default function ChatAssessment() {
     }
   };
 
-  const finishAndPredict = async (finalAnswers) => {
-    pushBot(
-      "Perfect — that's everything. Let me analyze your responses with the model…"
-    );
+  const finishAndPredict = async (finalAnswers, isRetry = false) => {
+    setPredictionFailed(false);
     setIsSubmitting(true);
 
-    if (aiStatus !== "ready") {
-      try {
-        const res = await wakeAiService(true);
-        if (res?.ready) setAiStatus("ready");
-      } catch {
-        /* ignore */
+    pushBot(
+      isRetry
+        ? "Trying again…"
+        : "Perfect — that's everything. Let me analyze your responses with the model…"
+    );
+
+    let response = null;
+
+    // The backend already retries for a while. If it still says "warming up",
+    // we try a couple more times here before showing an error.
+    for (let attempt = 0; attempt <= SUBMIT_AUTO_RETRIES; attempt++) {
+      response = await submitPrediction(finalAnswers);
+
+      if (response.success) break;
+      if (!response.isWarmingUp && !response.isNetworkError) break; // real error, don't retry
+
+      if (attempt < SUBMIT_AUTO_RETRIES) {
+        setAiStatus("waking");
+        await sleep(SUBMIT_RETRY_DELAY_MS);
       }
     }
 
-    const response = await submitPrediction(finalAnswers);
     setIsSubmitting(false);
 
     if (response.success) {
-      setPredictionResult(response.data);
+      wakeRunRef.current++; // stop any wake loop still running
       setAiStatus("ready");
-    } else {
-      pushBot(
-        response.error ||
-          "The AI service didn't respond in time. Give it a moment and try again.",
-        "error"
-      );
-      setAiStatus(response.isWarmingUp ? "waking" : "standby");
+      setPredictionResult(response.data);
+      return;
     }
+
+    setPredictionFailed(true);
+    setAiStatus(response.isWarmingUp || response.isNetworkError ? "standby" : aiStatus);
+    pushBot(
+      response.error ||
+        "The AI service didn't respond in time. Give it a moment and try again.",
+      "error"
+    );
   };
 
   const handleRetry = () => {
-    if (Object.keys(answers).length === QUESTIONS.length)
-      finishAndPredict(answers);
+    if (Object.keys(answers).length !== QUESTIONS.length) return;
+    startWakeLoop(); // nudge the AI awake again in the background
+    finishAndPredict(answers, true);
   };
 
   const handleReset = () => {
+    wakeRunRef.current++; // cancel any wake loop
     setMessages([]);
     setStepIndex(-1);
     setAnswers({});
     setPredictionResult(null);
+    setPredictionFailed(false);
     setIsSubmitting(false);
     setInputLocked(true);
+    setAiStatus("idle");
     startedRef.current = false;
   };
 
@@ -165,19 +209,35 @@ export default function ChatAssessment() {
       : null;
 
   const showStart = stepIndex === -1;
-  const hasError = messages.some((m) => m.variant === "error");
   const showInput = !!currentQuestion && !inputLocked && !isSubmitting;
+  const showRetry = predictionFailed && !predictionResult && !isSubmitting;
+
+  const statusLabel =
+    aiStatus === "ready"
+      ? "AI ready"
+      : aiStatus === "waking"
+      ? "AI waking up…"
+      : aiStatus === "standby"
+      ? "AI asleep"
+      : null;
 
   return (
     <div className="flex flex-col h-full w-full bg-background">
       {/* Header */}
       <header className="flex-shrink-0 border-b border-border bg-surface">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4">
-          <div className="inline-flex items-center gap-2 mb-1.5">
-            <span className="w-2 h-2 bg-accent"></span>
-            <span className="text-[11px] font-mono tracking-[0.2em] uppercase font-semibold text-muted">
-              Conversational Screening
-            </span>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <div className="inline-flex items-center gap-2">
+              <span className="w-2 h-2 bg-accent"></span>
+              <span className="text-[11px] font-mono tracking-[0.2em] uppercase font-semibold text-muted">
+                Conversational Screening
+              </span>
+            </div>
+            {statusLabel && (
+              <span className="text-[10px] font-mono uppercase tracking-wider text-muted">
+                {statusLabel}
+              </span>
+            )}
           </div>
           <h1 className="text-xl sm:text-2xl font-serif font-bold text-navy-deep tracking-tight leading-tight">
             Student Depression Risk Assessment
@@ -185,10 +245,10 @@ export default function ChatAssessment() {
         </div>
       </header>
 
-      {/* Chat column — constrained width, centered, fills remaining height */}
+      {/* Chat column */}
       <div className="flex-1 min-h-0 w-full">
         <div className="max-w-3xl mx-auto h-full flex flex-col px-4 sm:px-6">
-          {/* Message area — scrolls, and content sits at the bottom when short */}
+          {/* Message area */}
           <div className="flex-1 min-h-0 overflow-y-auto pt-4 pb-3">
             <div className="flex flex-col justify-end min-h-full gap-4">
               {showStart && (
@@ -225,9 +285,9 @@ export default function ChatAssessment() {
                 <ChatMessage role="bot">
                   <span className="inline-flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin text-accent" />
-                    {aiStatus === "waking"
-                      ? "Warming up the model and analyzing your responses…"
-                      : "Analyzing your responses…"}
+                    {aiStatus === "ready"
+                      ? "Analyzing your responses…"
+                      : "Waking up the AI model, this can take up to a minute on the first request…"}
                   </span>
                 </ChatMessage>
               )}
@@ -236,7 +296,7 @@ export default function ChatAssessment() {
             </div>
           </div>
 
-          {/* Input bar — sits right under messages, floats above viewport bottom */}
+          {/* Input bar */}
           <div className="flex-shrink-0 pb-5 sm:pb-8">
             <div className="bg-surface border border-border shadow-sm">
               <div className="px-3 py-2.5 sm:px-4 sm:py-3 min-h-[56px] flex items-center">
@@ -262,7 +322,7 @@ export default function ChatAssessment() {
                     />
                   )}
 
-                  {hasError && !predictionResult && (
+                  {showRetry && (
                     <button
                       type="button"
                       onClick={handleRetry}
@@ -273,7 +333,7 @@ export default function ChatAssessment() {
                     </button>
                   )}
 
-                  {!showInput && !isSubmitting && !hasError && (
+                  {!showInput && !isSubmitting && !showRetry && (
                     <p className="text-[11px] text-muted text-center font-mono py-1">
                       {showStart
                         ? "Press Start to begin the assessment."

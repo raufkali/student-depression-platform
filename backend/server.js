@@ -1,12 +1,11 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
+import "dotenv/config"
 import predictionRoutes, {
     pingMlService,
     resolveMlServiceUrl,
 } from "./routes/prediction.js";
 
-dotenv.config();
 
 const app = express();
 
@@ -38,18 +37,6 @@ app.get("/health", async (req, res) => {
 /**
  * Top-level wake route for convenience.
  */
-app.get("/wake", async (req, res) => {
-    const mlHealth = await pingMlService(7000);
-    res.json({
-        ready: mlHealth.isReady,
-        status: mlHealth.isReady ? "ready" : "waking",
-        backend: "healthy",
-        mlService: mlHealth,
-        message: mlHealth.isReady
-            ? "AI inference service is active and ready."
-            : "AI inference service is waking up from standby.",
-    });
-});
 
 // Prediction API routes mounted at /api
 app.use("/api", predictionRoutes);

@@ -36,89 +36,79 @@ export function resolveMlServiceUrl(rawUrl = process.env.ML_SERVICE_URL) {
 /**
  * Pings the ML service health endpoint to verify connectivity and wake up cold instances.
  */
-export async function pingMlService(timeoutMs = 8000) {
+
+export async function pingMlService(timeoutMs = 10000) {
     const baseUrl = resolveMlServiceUrl();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    const timeoutId = setTimeout(
+        () => controller.abort(),
+        timeoutMs
+    );
 
     try {
         const response = await fetch(`${baseUrl}/health`, {
             method: "GET",
             headers: { Accept: "application/json" },
             signal: controller.signal,
+            cache: "no-store",
         });
 
-        clearTimeout(timeoutId);
+        const data = await response.json().catch(() => ({}));
 
-        if (response.ok) {
-            const data = await response.json().catch(() => ({}));
-            return {
-                isReady: true,
-                status: "healthy",
-                modelLoaded: data.model_loaded ?? true,
-                targetUrl: baseUrl,
-            };
-        }
+        // HTTP 200 alone does NOT mean the ML model is ready.
+        const modelReady =
+            data.ready === true ||
+            data.model_loaded === true;
 
         return {
-            isReady: false,
-            status: "waking",
+            isReady: response.ok && modelReady,
+            status: response.ok && modelReady
+                ? "healthy"
+                : "waking",
+            modelLoaded: modelReady,
             statusCode: response.status,
             targetUrl: baseUrl,
+            details: data,
         };
+
     } catch (err) {
-        clearTimeout(timeoutId);
-        const isAbort = err.name === "AbortError";
         return {
             isReady: false,
             status: "waking",
-            error: isAbort ? "Request timed out during wake-up ping" : err.message,
+            modelLoaded: false,
+            error: err.name === "AbortError"
+                ? "ML service health check timed out."
+                : err.message,
             targetUrl: baseUrl,
         };
+
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
+
 
 /**
  * GET /api/wake
  * Explicit wake-up trigger for the ML inference service.
  * Pings the Python FastAPI service to trigger warm-up from standby.
  */
-router.get("/wake", async (req, res) => {
-    try {
-        const mlHealth = await pingMlService(7000);
 
-        return res.status(200).json({
-            ready: mlHealth.isReady,
-            status: mlHealth.isReady ? "ready" : "waking",
-            backend: "healthy",
-            mlService: mlHealth,
-            message: mlHealth.isReady
-                ? "AI inference service is active and ready."
-                : "AI inference service is waking up from standby.",
-        });
-    } catch (err) {
-        return res.status(200).json({
-            ready: false,
-            status: "waking",
-            backend: "healthy",
-            message: "Wake-up signal dispatched to AI service.",
-            error: err.message,
-        });
-    }
-});
 
 /**
  * GET /api/health
  * Combined health status for gateway backend and ML inference service.
  */
-router.get("/health", async (req, res) => {
-    const mlHealth = await pingMlService(5000);
+app.get("/health", async (req, res) => {
+    const mlHealth = await pingMlService(10000);
 
-    return res.status(200).json({
+    res.status(200).json({
         status: mlHealth.isReady ? "healthy" : "waking",
+        ready: mlHealth.isReady,
         backend: "healthy",
-        uptime: process.uptime(),
         mlService: mlHealth,
+        uptime: process.uptime(),
     });
 });
 
@@ -127,6 +117,34 @@ router.get("/health", async (req, res) => {
  * Forwards prediction payload to the ML service with automatic cold-start retry.
  * If the ML service is asleep, retries with backoff instead of immediately dropping the request.
  */
+
+
+
+
+router.get("/wake", async (req, res) => {
+    const mlHealth = await pingMlService(10000);
+
+    if (!mlHealth.isReady) {
+        return res.status(503).json({
+            ready: false,
+            status: "waking",
+            backend: "healthy",
+            message: "ML service is starting or loading its model.",
+            mlService: mlHealth,
+        });
+    }
+
+    return res.status(200).json({
+        ready: true,
+        status: "ready",
+        backend: "healthy",
+        message: "AI inference engine is ready.",
+        mlService: mlHealth,
+    });
+});
+
+
+
 router.post("/predict", async (req, res) => {
     const mlUrl = resolveMlServiceUrl();
     const MAX_RETRIES = 4;
